@@ -1,0 +1,592 @@
+name: build
+
+on: workflow_dispatch
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.9'
+
+      - name: scaffold
+        run: |
+          mkdir -p app/src/main/java/com/venice/freeze app/src/main/res/values
+
+cat > settings.gradle.kts <<'EOF'
+pluginManagement {
+    repositories { google(); mavenCentral(); gradlePluginPortal() }
+}
+dependencyResolutionManagement {
+    repositories { google(); mavenCentral() }
+}
+rootProject.name = "Freeze"
+include(":app")
+EOF
+
+cat > build.gradle.kts <<'EOF'
+plugins {
+    id("com.android.application") version "8.5.2" apply false
+    id("org.jetbrains.kotlin.android") version "2.0.20" apply false
+}
+EOF
+
+cat > gradle.properties <<'EOF'
+org.gradle.jvmargs=-Xmx2048m
+android.useAndroidX=true
+EOF
+
+cat > app/build.gradle.kts <<'EOF'
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+}
+
+android {
+    namespace = "com.venice.freeze"
+    compileSdk = 35
+
+    defaultConfig {
+        applicationId = "com.venice.freeze"
+        minSdk = 26
+        targetSdk = 35
+        versionCode = 1
+        versionName = "1.0"
+    }
+
+    buildTypes {
+        release { isMinifyEnabled = false }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions { jvmTarget = "17" }
+}
+EOF
+
+cat > app/src/main/AndroidManifest.xml <<'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <application
+        android:allowBackup="true"
+        android:label="Freeze"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:screenOrientation="portrait"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".PrankService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+    </application>
+</manifest>
+EOF
+
+cat > app/src/main/res/values/styles.xml <<'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="AppTheme" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#0B0D12</item>
+        <item name="android:navigationBarColor">#0B0D12</item>
+        <item name="android:windowBackground">#0B0D12</item>
+    </style>
+</resources>
+EOF
+
+cat > app/src/main/java/com/venice/freeze/MainActivity.kt <<'EOF'
+package com.venice.freeze
+
+import android.Manifest
+import android.app.Activity
+import android.app.ActivityManager
+import android.content.Intent
+import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
+import android.graphics.Color
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.provider.Settings
+import android.view.View
+import android.view.WindowManager
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Toast
+
+class MainActivity : Activity() {
+
+    private var level = 1
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        }
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+
+        val root = LinearLayout(this)
+        root.orientation = LinearLayout.VERTICAL
+        root.setBackgroundColor(Color.parseColor("#0B0D12"))
+        root.setPadding(dp(26), dp(56), dp(26), dp(32))
+
+        root.addView(label("PRANK APP", 11f, "#7B8190"))
+
+        val title = TextView(this)
+        title.text = "Freeze"
+        title.textSize = 44f
+        title.setTextColor(Color.WHITE)
+        title.setPadding(0, dp(8), 0, 0)
+        root.addView(title)
+
+        val body = TextView(this)
+        body.text = "Covers the whole screen, blocks every tap, floods alerts, plays a siren and vibrates. Nothing breaks. Hold the pill for three seconds to get out."
+        body.textSize = 14f
+        body.setTextColor(Color.parseColor("#9AA0AD"))
+        body.setPadding(0, dp(12), 0, 0)
+        root.addView(body)
+
+        root.addView(View(this), LinearLayout.LayoutParams(1, 0, 1f))
+
+        root.addView(label("INTENSITY", 11f, "#6B7280"))
+
+        val chips = LinearLayout(this)
+        chips.orientation = LinearLayout.HORIZONTAL
+        chips.setPadding(0, dp(8), 0, 0)
+        val buttons = ArrayList<Button>()
+        val names = listOf("Mild", "Annoying", "Nuclear")
+        for (i in names.indices) {
+            val b = Button(this)
+            b.text = names[i]
+            b.textSize = 13f
+            b.setOnClickListener {
+                level = i + 1
+                for (j in buttons.indices) paint(buttons[j], j + 1)
+            }
+            buttons.add(b)
+            val lp = LinearLayout.LayoutParams(0, dp(46), 1f)
+            lp.rightMargin = dp(8)
+            chips.addView(b, lp)
+        }
+        root.addView(chips)
+        for (j in buttons.indices) paint(buttons[j], j + 1)
+
+        val start = Button(this)
+        start.text = "Start prank"
+        start.textSize = 16f
+        start.setTextColor(Color.WHITE)
+        start.setBackgroundColor(Color.parseColor("#2563EB"))
+        start.setOnClickListener { launch() }
+        root.addView(start, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(56)
+        ).apply { topMargin = dp(14) })
+
+        setContentView(root)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+        }
+    }
+
+    private fun label(t: String, size: Float, color: String): TextView {
+        val v = TextView(this)
+        v.text = t
+        v.textSize = size
+        v.setTextColor(Color.parseColor(color))
+        return v
+    }
+
+    private fun paint(b: Button, id: Int) {
+        if (id == level) {
+            b.setBackgroundColor(Color.parseColor("#1D3A5C"))
+            b.setTextColor(Color.parseColor("#CFE4FF"))
+        } else {
+            b.setBackgroundColor(Color.parseColor("#15181F"))
+            b.setTextColor(Color.parseColor("#9AA0AD"))
+        }
+    }
+
+    private fun launch() {
+        if (!Settings.canDrawOverlays(this)) {
+            Toast.makeText(this, "Allow display over other apps, then tap again", Toast.LENGTH_LONG).show()
+            startActivity(Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:" + packageName)
+            ))
+            return
+        }
+        val i = Intent(this, PrankService::class.java)
+        i.putExtra("level", level)
+        startForegroundService(i)
+        moveTaskToBack(true)
+    }
+
+    override fun onBackPressed() {
+        val am = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+        val live = am.getRunningServices(60).any { s -> s.service.className == PrankService::class.java.name }
+        if (live) moveTaskToBack(true) else super.onBackPressed()
+    }
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+}
+EOF
+
+cat > app/src/main/java/com/venice/freeze/SoundEngine.kt <<'EOF'
+package com.venice.freeze
+
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioManager
+import android.media.AudioTrack
+import kotlin.random.Random
+
+class SoundEngine(private val am: AudioManager) {
+
+    private var track: AudioTrack? = null
+
+    fun start() {
+        val rate = 44100
+        val total = rate * 24
+        val pcm = ShortArray(total)
+
+        var i = 0
+        while (i < total) {
+            val seg = (rate * 0.22).toInt()
+            val freq = Random.nextInt(480, 1560).toDouble()
+            val gap = Random.nextInt(0, 7) == 0
+            var n = 0
+            while (n < seg && i < total) {
+                var s = 0.0
+                if (!gap) {
+                    val phase = (i.toDouble() * freq / rate) % 1.0
+                    s = if (phase < 0.5) 0.30 else -0.30
+                    val gate = seg * 0.12
+                    if (n < gate) s *= n / gate
+                    if (n > seg - gate) s *= (seg - n) / gate
+                }
+                pcm[i] = (s * Short.MAX_VALUE).toInt().toShort()
+                i++
+                n++
+            }
+        }
+
+        try {
+            am.setStreamVolume(AudioManager.STREAM_MUSIC, am.getStreamMaxVolume(AudioManager.STREAM_MUSIC), 0)
+        } catch (e: Exception) {}
+
+        val t = AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(rate)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .build()
+            )
+            .setBufferSizeInBytes(pcm.size * 2)
+            .setTransferMode(AudioTrack.MODE_STATIC)
+            .build()
+
+        t.write(pcm, 0, pcm.size)
+        t.setLoopPoints(0, pcm.size, -1)
+        t.play()
+        track = t
+    }
+
+    fun stop() {
+        try {
+            track?.stop()
+            track?.release()
+        } catch (e: Exception) {}
+        track = null
+    }
+}
+EOF
+
+cat > app/src/main/java/com/venice/freeze/PrankService.kt <<'EOF'
+package com.venice.freeze
+
+import android.animation.ValueAnimator
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
+import android.content.Intent
+import android.graphics.Color
+import android.graphics.PixelFormat
+import android.media.AudioManager
+import android.os.Build
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.WindowManager
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
+import kotlin.random.Random
+
+class PrankService : Service() {
+
+    private val handler = Handler(Looper.getMainLooper())
+    private var wm: WindowManager? = null
+    private var root: FrameLayout? = null
+    private var feed: LinearLayout? = null
+    private var counter: TextView? = null
+    private var tapLabel: TextView? = null
+    private var pillFill: View? = null
+    private var pillLabel: TextView? = null
+    private var sound: SoundEngine? = null
+    private var vibrator: Vibrator? = null
+
+    private var pops = 0
+    private var taps = 0
+    private var gap = 2000L
+    private var running = false
+
+    private val apps = listOf(
+        Triple("DoorDash", "#E23744", "Your Dasher is on the way"),
+        Triple("Venmo", "#3D95CE", "Maya requested \$1.00"),
+        Triple("Instagram", "#C13584", "new login from unknown device"),
+        Triple("Walmart", "#0071CE", "Your order is delayed"),
+        Triple("Cash App", "#00C244", "You received \$0.01"),
+        Triple("TikTok", "#111418", "Someone viewed your profile"),
+        Triple("Amazon", "#E07B16", "Your package was left in the rain"),
+        Triple("Chime", "#1EC677", "Direct deposit posted"),
+        Triple("Uber Eats", "#0E7D4A", "Courier is 2 stops away"),
+        Triple("Discord", "#5865F2", "ping from #general"),
+        Triple("Starbucks", "#00704A", "Your mobile order is ready"),
+        Triple("Planet Fitness", "#7B2D8E", "Peak hours are starting"),
+        Triple("Telegram", "#2AABEE", "new device signed in"),
+        Triple("Best Buy", "#0046BE", "curbside pickup confirmed"),
+        Triple("Target", "#CC0000", "item back in stock"),
+        Triple("Snapchat", "#FFFC00", "sent you a Snap")
+    )
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        vibrator = getSystemService(VIBRATOR_SERVICE) as Vibrator
+        sound = SoundEngine(getSystemService(AUDIO_SERVICE) as AudioManager)
+        startForegroundSafe()
+        attachOverlay()
+        running = true
+        sound?.start()
+        handler.postDelayed({ pop() }, 400)
+        handler.post(floodRunnable)
+        handler.post(vibeRunnable)
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.getIntExtra("level", 1) ?: 1) {
+            2 -> gap = 1000L
+            3 -> gap = 400L
+            else -> gap = 2000L
+        }
+        return START_STICKY
+    }
+
+    private val floodRunnable = object : Runnable {
+        override fun run() {
+            if (!running) return
+            pop()
+            handler.postDelayed(this, gap)
+        }
+    }
+
+    private val vibeRunnable = object : Runnable {
+        override fun run() {
+            if (!running) return
+            vibrator?.vibrate(VibrationEffect.createWaveform(longArrayOf(170, 70, 170), -1))
+            handler.postDelayed(this, 2000)
+        }
+    }
+
+    private fun startForegroundSafe() {
+        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            nm.createNotificationChannel(
+                NotificationChannel("freeze", "Freeze", NotificationManager.IMPORTANCE_LOW)
+            )
+        }
+        val n: Notification = Notification.Builder(this, "freeze")
+            .setContentTitle("Freeze is running")
+            .setContentText("Hold the pill to stop")
+            .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+            .setOngoing(true)
+            .build()
+        startForeground(1, n)
+    }
+
+    private fun attachOverlay() {
+        val frame = FrameLayout(this)
+        frame.setBackgroundColor(Color.parseColor("#F20B0D12"))
+        frame.isClickable = true
+        frame.setOnTouchListener { _, e ->
+            if (e.action == MotionEvent.ACTION_DOWN) {
+                taps++
+                tapLabel?.text = taps.toString() + " taps"
+                vibrator?.vibrate(VibrationEffect.createOneShot(35, VibrationEffect.DEFAULT_AMPLITUDE))
+            }
+            true
+        }
+
+        val feedView = LinearLayout(this)
+        feedView.orientation = LinearLayout.VERTICAL
+        feedView.setPadding(dp(10), dp(34), dp(10), 0)
+        feed = feedView
+        frame.addView(feedView, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP
+        ))
+
+        val hud = LinearLayout(this)
+        hud.orientation = LinearLayout.HORIZONTAL
+        hud.gravity = Gravity.CENTER
+
+        counter = TextView(this)
+        counter.text = "0 alerts"
+        counter.textSize = 11f
+        counter.setTextColor(Color.parseColor("#7B8190"))
+        counter.setBackgroundColor(Color.parseColor("#E60B0D12"))
+
+        tapLabel = TextView(this)
+        tapLabel.text = "0 taps"
+        tapLabel.textSize = 11f
+        tapLabel.setTextColor(Color.parseColor("#7B8190"))
+        tapLabel.setBackgroundColor(Color.parseColor("#E60B0D12"))
+
+        hud.addView(counter)
+        hud.addView(tapLabel)
+        frame.addView(hud, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        ).apply { bottomMargin = dp(78) })
+
+        val pill = FrameLayout(this)
+        pill.setBackgroundColor(Color.parseColor("#1A1D24"))
+        pill.setPadding(dp(22), dp(13), dp(22), dp(13))
+
+        pillFill = View(this)
+        pillFill!!.setBackgroundColor(Color.parseColor("#2563EB"))
+        pill.addView(pillFill, FrameLayout.LayoutParams(0, FrameLayout.LayoutParams.MATCH_PARENT))
+
+        pillLabel = TextView(this)
+        pillLabel!!.text = "hold to stop"
+        pillLabel!!.textSize = 12f
+        pillLabel!!.setTextColor(Color.parseColor("#C9CEDB"))
+        pill.addView(pillLabel, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER
+        ))
+
+        pill.setOnTouchListener { _, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> beginHold()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> cancelHold()
+            }
+            true
+        }
+
+        frame.addView(pill, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        ).apply { bottomMargin = dp(16) })
+
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        )
+        lp.gravity = Gravity.TOP or Gravity.START
+
+        try { wm?.addView(frame, lp) } catch (e: Exception) {}
+        root = frame
+    }
+
+    private var holdRun: Runnable? = null
+    private var holdAnim: ValueAnimator? = null
+
+    private fun beginHold() {
+        pillLabel?.text = "hold..."
+        val w = (root?.width ?: 1080).toFloat()
+        holdAnim = ValueAnimator.ofFloat(0f, w * 0.62f)
+        holdAnim!!.duration = 2600
+        holdAnim!!.addUpdateListener { a ->
+            val params = pillFill?.layoutParams as? FrameLayout.LayoutParams
+            if (params != null) {
+                params.width = (a.animatedValue as Float).toInt()
+                pillFill?.layoutParams = params
+            }
+        }
+        holdAnim!!.start()
+        holdRun = Runnable { stopSelf() }
+        handler.postDelayed(holdRun!!, 2600)
+    }
+
+    private fun cancelHold() {
+        holdRun?.let { handler.removeCallbacks(it) }
+        holdAnim?.cancel()
+        pillLabel?.text = "hold to stop"
+        val params = pillFill?.layoutParams as? FrameLayout.LayoutParams
+        if (params != null) {
+            params.width = 0
+            pillFill?.layoutParams = params
+        }
+    }
+
+    private fun pop() {
+        if (pops > 0 && pops % 18 == 0) gap = (gap * 0.88).toLong().coerceAtLeast(380L)
+        pops++
+        counter?.text = pops.toString() + " alerts"
+        vibrator?.vibrate(VibrationEffect.createOneShot(80, VibrationEffect.DEFAULT_AMPLITUDE))
+
+        val pick = apps[Random.nextInt(apps.size)]
+
+        val card = LinearLayout(this)
+        card.orientation = LinearLayou
