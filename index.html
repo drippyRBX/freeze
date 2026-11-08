@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0B0D12">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-512.png">
+<title>Freeze</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body { background: #0B0D12; color: #fff; font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; overflow: hidden; }
+  .screen { position: fixed; inset: 0; display: flex; flex-direction: column; }
+  #startScreen { padding: 26px 26px 32px; }
+  .kicker { font-size: 11px; letter-spacing: 2px; color: #7B8190; margin-top: 30px; }
+  h1 { font-size: 44px; margin-top: 8px; }
+  .body { font-size: 14px; color: #9AA0AD; margin-top: 12px; line-height: 1.5; }
+  .spacer { flex: 1; }
+  .label { font-size: 11px; letter-spacing: 2px; color: #6B7280; }
+  .chips { display: flex; gap: 8px; margin-top: 8px; }
+  .chip { flex: 1; height: 46px; border: none; border-radius: 10px; font-size: 13px; background: #15181F; color: #9AA0AD; cursor: pointer; }
+  .chip.on { background: #1D3A5C; color: #CFE4FF; }
+  #startBtn { width: 100%; height: 56px; margin-top: 14px; border: none; border-radius: 12px; background: #2563EB; color: #fff; font-size: 16px; cursor: pointer; }
+  #prankScreen { display: none; }
+  #feed { padding: 34px 10px 0; overflow: hidden; }
+  .card { display: flex; align-items: center; background: #171A21; border-radius: 14px; padding: 10px 12px; margin-bottom: 8px; animation: slidein .25s ease-out; }
+  @keyframes slidein { from { transform: translateY(-16px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+  .dot { width: 34px; height: 34px; min-width: 34px; border-radius: 9px; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 700; color: #fff; margin-right: 10px; }
+  .texts { flex: 1; min-width: 0; }
+  .app { font-size: 13px; font-weight: 600; }
+  .msg { font-size: 12px; color: #9AA0AD; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .time { font-size: 11px; color: #7B8190; margin-left: 8px; }
+  #hint { position: absolute; bottom: 24px; left: 0; right: 0; text-align: center; font-size: 12px; color: #7B8190; }
+  #counts { position: absolute; bottom: 78px; left: 0; right: 0; text-align: center; font-size: 11px; color: #7B8190; }
+</style>
+</head>
+<body>
+
+<div id="startScreen" class="screen">
+  <div class="kicker">PRANK APP</div>
+  <h1>Freeze</h1>
+  <div class="body">Fake alerts flood the screen with an annoying siren. Tap anywhere &mdash; or hit the power button &mdash; and it stops instantly. Nothing breaks.</div>
+  <div class="spacer"></div>
+  <div class="label">INTENSITY</div>
+  <div class="chips">
+    <button class="chip on" data-level="1">Mild</button>
+    <button class="chip" data-level="2">Annoying</button>
+    <button class="chip" data-level="3">Nuclear</button>
+  </div>
+  <button id="startBtn">Start prank</button>
+</div>
+
+<div id="prankScreen" class="screen">
+  <div id="feed"></div>
+  <div id="counts">0 alerts &middot; 0 taps</div>
+  <div id="hint">tap anywhere to stop</div>
+</div>
+
+<script>
+const APPS = [
+  ["DoorDash", "#E23744", "Your Dasher is on the way"],
+  ["Venmo", "#3D95CE", "Maya requested $1.00"],
+  ["Instagram", "#C13584", "new login from unknown device"],
+  ["Walmart", "#0071CE", "Your order is delayed"],
+  ["Cash App", "#00C244", "You received $0.01"],
+  ["TikTok", "#111418", "Someone viewed your profile"],
+  ["Amazon", "#E07B16", "Your package was left in the rain"],
+  ["Chime", "#1EC677", "Direct deposit posted"],
+  ["Uber Eats", "#0E7D4A", "Courier is 2 stops away"],
+  ["Discord", "#5865F2", "ping from #general"],
+  ["Starbucks", "#00704A", "Your mobile order is ready"],
+  ["Planet Fitness", "#7B2D8E", "Peak hours are starting"],
+  ["Telegram", "#2AABEE", "new device signed in"],
+  ["Best Buy", "#0046BE", "curbside pickup confirmed"],
+  ["Target", "#CC0000", "item back in stock"],
+  ["Snapchat", "#FFFC00", "sent you a Snap"]
+];
+
+let level = 1, gap = 2000, pops = 0, taps = 0, running = false;
+let audioCtx = null, sirenSrc = null, timer = null;
+const feed = document.getElementById('feed');
+const counts = document.getElementById('counts');
+
+document.querySelectorAll('.chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('.chip').forEach(c => c.classList.remove('on'));
+    chip.classList.add('on');
+    level = parseInt(chip.dataset.level, 10);
+  });
+});
+
+document.getElementById('startBtn').addEventListener('click', startPrank);
+document.getElementById('prankScreen').addEventListener('pointerdown', (e) => {
+  taps++;
+  updateCounts();
+  if (navigator.vibrate) navigator.vibrate(35);
+  stopPrank();
+});
+
+function startPrank() {
+  gap = level === 2 ? 1000 : level === 3 ? 400 : 2000;
+  pops = 0; taps = 0;
+  feed.innerHTML = '';
+  updateCounts();
+  document.getElementById('startScreen').style.display = 'none';
+  document.getElementById('prankScreen').style.display = 'flex';
+  running = true;
+  startSiren();
+  setTimeout(pop, 400);
+  timer = setInterval(() => { if (running) pop(); }, gap);
+}
+
+function stopPrank() {
+  running = false;
+  clearInterval(timer);
+  stopSiren();
+  if (navigator.vibrate) navigator.vibrate(0);
+  document.getElementById('prankScreen').style.display = 'none';
+  document.getElementById('startScreen').style.display = 'flex';
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && running) stopPrank();
+});
+window.addEventListener('pagehide', () => { if (running) stopPrank(); });
+
+function updateCounts() {
+  counts.textContent = pops + ' alerts \u00b7 ' + taps + ' taps';
+}
+
+function pop() {
+  if (!running) return;
+  if (pops > 0 && pops % 18 === 0) {
+    gap = Math.max(380, Math.floor(gap * 0.88));
+    clearInterval(timer);
+    timer = setInterval(() => { if (running) pop(); }, gap);
+  }
+  pops++;
+  updateCounts();
+  if (navigator.vibrate) navigator.vibrate(80);
+  const pick = APPS[Math.floor(Math.random() * APPS.length)];
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML =
+    '<div class="dot" style="background:' + pick[1] + '">' + pick[0][0] + '</div>' +
+    '<div class="texts"><div class="app">' + pick[0] + '</div>' +
+    '<div class="msg">' + pick[2] + '</div></div>' +
+    '<div class="time">now</div>';
+  feed.prepend(card);
+  while (feed.children.length > 6) feed.removeChild(feed.lastChild);
+}
+
+function startSiren() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const rate = 44100, total = rate * 24;
+    const buf = audioCtx.createBuffer(1, total, rate);
+    const data = buf.getChannelData(0);
+    let i = 0;
+    while (i < total) {
+      const seg = Math.floor(rate * 0.22);
+      const freq = 480 + Math.random() * 1080;
+      const silent = Math.random() < 1 / 7;
+      let n = 0;
+      while (n < seg && i < total) {
+        let s = 0;
+        if (!silent) {
+          const phase = ((i * freq / rate) % 1);
+          s = phase < 0.5 ? 0.30 : -0.30;
+          const gate = seg * 0.12;
+          if (n < gate) s *= n / gate;
+          if (n > seg - gate) s *= (seg - n) / gate;
+        }
+        data[i] = s;
+        i++; n++;
+      }
+    }
+    sirenSrc = audioCtx.createBufferSource();
+    sirenSrc.buffer = buf;
+    sirenSrc.loop = true;
+    sirenSrc.connect(audioCtx.destination);
+    sirenSrc.start();
+  } catch (e) { /* audio unavailable — prank still runs silent */ }
+}
+
+function stopSiren() {
+  try { if (sirenSrc) { sirenSrc.stop(); sirenSrc.disconnect(); sirenSrc = null; } } catch (e) {}
+}
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
+</script>
+</body>
+</html>
