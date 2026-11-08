@@ -1,0 +1,53 @@
+name: build-apk
+
+on: workflow_dispatch
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: install bubblewrap
+        run: npm install -g @bubblewrap/cli
+
+      - name: restore keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          echo "$KEYSTORE_B64" | base64 -d > twa/freeze.keystore
+          ls -la twa/freeze.keystore
+
+      - name: configure bubblewrap
+        run: |
+          mkdir -p ~/.bubblewrap
+          printf '{"jdkPath": "%s", "androidSdkPath": "%s"}' "$JAVA_HOME" "$ANDROID_HOME" > ~/.bubblewrap/config.json
+          cat ~/.bubblewrap/config.json
+          # Bubblewrap's SDK check needs a tools/ (or bin/) folder under the SDK
+          # root; modern SDKs only ship cmdline-tools, so link it into place.
+          if [ ! -e "$ANDROID_HOME/tools" ] && [ ! -e "$ANDROID_HOME/bin" ]; then
+            CMDLINE=$(ls -d "$ANDROID_HOME"/cmdline-tools/* 2>/dev/null | head -1)
+            if [ -n "$CMDLINE" ]; then ln -s "$CMDLINE" "$ANDROID_HOME/tools"; fi
+          fi
+          ls "$ANDROID_HOME/tools/bin/sdkmanager"
+
+      - name: build
+        working-directory: twa
+        env:
+          BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          BUBBLEWRAP_KEY_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: bubblewrap build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: freeze-apk
+          path: twa/app-release-signed.apk
